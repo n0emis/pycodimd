@@ -29,7 +29,6 @@ class CodiMD:
             'password': password
         })
         self.login_cookies = r.cookies
-        print(self.login_cookies)
 
     def default_cookie_file(self):
         HOME = os.environ['HOME']
@@ -94,7 +93,7 @@ class CodiMD:
 
         length_line = len(selected_line) + 1  # +1, because of the \n
         length_before = 0
-        length_after = -1  # +1, because the last line has no \n
+        length_after = -1  # -1, because the last line has no \n
 
         for line in lines[:line_num]:
             length_before += len(line) + 1  # +1, because of the \n
@@ -102,10 +101,34 @@ class CodiMD:
         for line in lines[line_num + 1:]:
             length_after += len(line) + 1  # +1, because of the \n
 
-        print('s line', selected_line)
-        print('s line len', length_line)
+        asyncio.run(
+            self.send_ws_edit(
+                note_id, -length_line, length_before, length_after))
 
-        asyncio.run(self.send_ws_edit(note_id, -length_line, length_before, length_after))
+    def insert_line(self, note_id, line_num, line_content):
+        content = self.content(note_id)
+        lines = content.split('\n')
+
+        length_before = -1
+        length_after = 0
+
+        for line in lines[:line_num]:
+            length_before += len(line) + 1  # +1, because of the \n
+
+        for line in lines[line_num + 1:]:
+            length_after += len(line) + 1  # +1, because of the \n
+
+        asyncio.run(
+            self.send_ws_edit(
+                note_id,
+                line_content,
+                length_before,
+                length_after,
+                True))
+
+    def replace_line(self, note_id, line_num, line_content):
+        self.delete_line(note_id, line_num)
+        self.insert_line(note_id, line_num, line_content)
 
     async def socket_connect(self, note_id):
         secret = self.get_io_secret(note_id)
@@ -122,43 +145,54 @@ class CodiMD:
         self.socket = await websockets.connect(uri)
 
         await self.socket.send("2probe")
-        print(1)
         message = await self.socket.recv()
         if message == "3probe":
             await self.socket.send("5")
-            print(2)
             await self.socket.recv()
 
             await self.socket.send('42["user status",{"idle":false,"type":"lg"}]')
-            print(3)
             msg = await self.socket.recv()
             self.next_edit_id = json.loads(msg[2:])[1]['revision']
             await self.socket.send("2")
             await self.socket.recv()
-            print(4)
-        print(5)
-        #await self.socket.close()
+            await self.socket.recv()
+            await self.socket.recv()
 
-    async def send_ws_edit(self, note_id, edit, char_before, char_behind, anchor=None, head=None):
-        print(self.socket)
+    async def send_ws_selection(self, note_id, anchor, head):
         if self.socket is None:
             await self.socket_connect(note_id)
 
+    async def send_ws_edit(self, note_id, edit, char_before, char_behind, selection=False):
+        if self.socket is None:
+            await self.socket_connect(note_id)
+
+        if isinstance(edit, int) and edit < 0:
+            editlen = 0
+        else:
+            editlen = len(edit) + 1  # =1, because of the \n
+
+        if selection:
+            sel_anchor = str(char_before - 1)
+            sel_head = str(char_before - 1)
+            selection_string = '42["selection",{"ranges":[{"anchor":' + \
+                sel_anchor + ',"head":' + sel_head + '}]}]'
+            await self.socket.send(selection_string)
+
         id = str(self.next_edit_id)
-        edit = str(edit)
+        edit = str(edit) if isinstance(edit, int) else '"\\n' + str(edit) + '"'
+        anchor = str(char_before + editlen)
+        head = str(char_before + editlen)
         char_before = str(char_before)
         char_behind = str(char_behind)
-        anchor = char_before if not anchor else str(anchor)
-        head = char_before if not head else str(head)
 
         edit_string = '42["operation",' + id + ',[' + char_before + ',' + edit + ',' + \
             char_behind + '],{"ranges":[{"anchor":' + anchor + ',"head":' + head + '}]}]'
 
-        print('str', edit_string)
         await self.socket.send(edit_string)
-        print(await self.socket.recv())
 
         self.next_edit_id += 1
+        await self.socket.close()
+        self.socket = None
 
     def set_permission(note_id, permission="freely"):
         asyncio.run(_set_permission(note_id, permission="freely"))

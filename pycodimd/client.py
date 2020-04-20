@@ -194,10 +194,10 @@ class CodiMD:
         await self.socket.close()
         self.socket = None
 
-    def set_permission(note_id, permission="freely"):
-        asyncio.run(_set_permission(note_id, permission="freely"))
+    def set_permission(self, note_id, permission="freely"):
+        asyncio.run(self._set_permission(note_id, permission="freely"))
 
-    async def _set_permission(note_id, permission="freely"):
+    async def _set_permission(self, note_id, permission="freely"):
         secret = self.get_io_secret(note_id)
         uri = self.server_url.replace(
             'https',

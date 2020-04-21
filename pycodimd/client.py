@@ -101,7 +101,7 @@ class CodiMD:
         for line in lines[line_num + 1:]:
             length_after += len(line) + 1  # +1, because of the \n
 
-        asyncio.run(
+        return asyncio.run(
             self.send_ws_edit(
                 note_id, -length_line, length_before, length_after))
 
@@ -115,10 +115,10 @@ class CodiMD:
         for line in lines[:line_num]:
             length_before += len(line) + 1  # +1, because of the \n
 
-        for line in lines[line_num + 1:]:
+        for line in lines[line_num:]:
             length_after += len(line) + 1  # +1, because of the \n
 
-        asyncio.run(
+        return asyncio.run(
             self.send_ws_edit(
                 note_id,
                 line_content,
@@ -147,12 +147,13 @@ class CodiMD:
         await self.socket.send("2probe")
         message = await self.socket.recv()
         if message == "3probe":
+            self.next_edit_id = None
             await self.socket.send("5")
-            await self.socket.recv()
-
             await self.socket.send('42["user status",{"idle":false,"type":"lg"}]')
-            msg = await self.socket.recv()
-            self.next_edit_id = json.loads(msg[2:])[1]['revision']
+            while self.next_edit_id is None:
+                msg = await self.socket.recv()
+                if msg.startswith('42["doc"'):
+                    self.next_edit_id = json.loads(msg[2:])[1]['revision']
             await self.socket.send("2")
             await self.socket.recv()
             await self.socket.recv()
@@ -164,7 +165,11 @@ class CodiMD:
 
     async def send_ws_edit(self, note_id, edit, char_before, char_behind, selection=False):
         if self.socket is None:
+            #print('open socket')
             await self.socket_connect(note_id)
+        else:
+            #print('socket oepn')
+            pass
 
         if isinstance(edit, int) and edit < 0:
             editlen = 0
@@ -180,19 +185,43 @@ class CodiMD:
 
         id = str(self.next_edit_id)
         edit = str(edit) if isinstance(edit, int) else '"\\n' + str(edit) + '"'
-        anchor = str(char_before + editlen)
-        head = str(char_before + editlen)
+        anchor = str(char_before)
+        head = str(char_before)
         char_before = str(char_before)
         char_behind = str(char_behind)
 
-        edit_string = '42["operation",' + id + ',[' + char_before + ',' + edit + ',' + \
-            char_behind + '],{"ranges":[{"anchor":' + anchor + ',"head":' + head + '}]}]'
+        msg_sent = False
+        tries = 0
 
-        await self.socket.send(edit_string)
+        while not msg_sent and tries < 3:
+            edit_string = '42["operation",' + id + ',[' + char_before + ',' + edit + ',' + \
+                char_behind + '],{"ranges":[{"anchor":' + anchor + ',"head":' + head + '}]}]'
+
+            # print(edit_string)
+            await self.socket.send(edit_string)
+            # print('send')
+            answer = await self.socket.recv()
+            # print(answer)
+            while not answer.startswith('42'):
+                #print('2:', answer)
+                answer = await self.socket.recv()
+
+            if answer.startswith('42["ack",'):
+                msg_sent = True
+            else:
+
+                # print('retry')
+                tries += 1
+                try:
+                    self.next_edit_id = json.loads(answer[2:])[1]['revision']
+                except BaseException:
+                    continue
 
         self.next_edit_id += 1
         await self.socket.close()
         self.socket = None
+
+        return msg_sent
 
     def set_permission(self, note_id, permission="freely"):
         asyncio.run(self._set_permission(note_id, permission="freely"))

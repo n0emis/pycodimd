@@ -22,7 +22,7 @@ for note in cmd.history():
         print('-' * 20)
         print(note['text'])
 
-        cmd.set_permission(note['id'])
+        cmd.set_permission(note['id'], "editable")
         content = cmd.content(note['id'])
         yaml_block = content.split('---')[1].replace('\t', ' ')
         metadata = yaml.load(yaml_block, Loader=yaml.SafeLoader)
